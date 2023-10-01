@@ -1,14 +1,16 @@
 const jwt = require("jsonwebtoken");
 const userDb = require("../modules/userSchema");
 module.exports = {
-    verifyToken: (token, socket) => {
+    verifyToken: async (token, socket) => {
         let username
         let character
-        jwt.verify(token, process.env.JWT_SECRET, async (err, data) => {
-            if (err) return socket.emit('error', 'error')
+        jwt.verify(token, process.env.JWT_SECRET, (err, data) => {
+            if (err) return socket.emit('error', '401 authorization error')
             username = data.username
             character = data.character
         })
+        const user = await userDb.findOne({username})
+        if (!user) return socket.emit('error', 'Fatal: user not found')
         return {username, character}
     },
     getSingleUserFromDb: async (username) => {

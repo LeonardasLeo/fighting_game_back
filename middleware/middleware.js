@@ -9,16 +9,16 @@ module.exports = {
     authorizeRegister: async (req, res, next) => {
         const {username, character, passOne, passTwo} = req.body
         const userInDb = await userDb.findOne({username})
-        if (!character) return resSend(res, true, 'please select character', null)
-        if (userInDb) return resSend(res, true, 'user already exists', null)
-        if (username === '' || passOne === '' || passTwo === '') return resSend(res, true, 'fields must not be empty', null)
-        if (passOne !== passTwo) return resSend(res, true, 'passwords must match', null)
+        if (!character) return resSend(res, true, 'Please select character', null)
+        if (userInDb) return resSend(res, true, 'User already exists', null)
+        if (username === '' || passOne === '' || passTwo === '') return resSend(res, true, 'Fields must not be empty', null)
+        if (passOne !== passTwo) return resSend(res, true, 'Passwords must match', null)
         req.hash = await bcrypt.hash(passOne, 10)
         next()
     },
     authorizeLogin: async (req, res, next) => {
         const {username, password} = req.body
-        if (username === '' || password === '') return resSend(res, true, 'fields must not be empty', null)
+        if (username === '' || password === '') return resSend(res, true, 'Fields must not be empty', null)
         const userInDb = await userDb.findOne({username})
         if (userInDb){
             const isPasswordCorrect = await bcrypt.compare(password, userInDb.password)
@@ -31,16 +31,20 @@ module.exports = {
                 req.token = jwt.sign(user, process.env.JWT_SECRET)
                 next()
             }else{
-                resSend(res, true, 'password incorrect', null)
+                resSend(res, true, 'Password incorrect', null)
             }
         }else{
-            return resSend(res, true, 'user doesnt exist', null)
+            return resSend(res, true, 'User doesnt exist', null)
         }
     },
     authorize: (req, res, next) => {
         const {authorization} = req.headers
-        jwt.verify(authorization, process.env.JWT_SECRET, (err, data) => {
+        jwt.verify(authorization, process.env.JWT_SECRET, async (err, data) => {
             if (err) return resSend(res, true, '401 authorization error', null)
+            const user = await userDb.findOne({username: data.username})
+            if (!user){
+                return resSend(res, true, 'user not found in database', null)
+            }
             req.user = data
             next()
         })

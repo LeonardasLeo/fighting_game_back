@@ -28,12 +28,12 @@ module.exports = (server) => {
 
     io.on('connection',  (socket) => {
         socket.on('userConnected', async (token) => {
-            const {username} = verifyToken(token, socket)
+            const {username} = await verifyToken(token, socket)
             const user = await getSingleUserFromDb(username)
             socket.emit('getUserData', user)
         })
-        socket.on('requestOnlineUsers', (token) => {
-                const data = verifyToken(token, socket)
+        socket.on('requestOnlineUsers', async (token) => {
+                const data = await verifyToken(token, socket)
                 const user = {...data, socketId: socket.id}
                 const isDuplicateUser = onlineUsers.some(x => x.username === user.username)
                 if (!isDuplicateUser){
