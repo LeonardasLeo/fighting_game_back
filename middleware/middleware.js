@@ -43,7 +43,7 @@ module.exports = {
             if (err) return resSend(res, true, '401 authorization error', null)
             const user = await userDb.findOne({username: data.username})
             if (!user){
-                return resSend(res, true, 'user not found in database', null)
+                return resSend(res, true, 'User not found in database', null)
             }
             req.user = data
             next()
@@ -52,7 +52,7 @@ module.exports = {
     checkInventory: async (req, res, next) => {
         const {username} = req.user
         const userInDb = await userDb.findOne({username})
-        if (!userInDb.inventory.includes('')) return resSend(res, true, 'inventory full', null)
+        if (!userInDb.inventory.includes('')) return resSend(res, true, 'Inventory full', null)
         next()
     },
     checkMoney: (req, res, next) => {
