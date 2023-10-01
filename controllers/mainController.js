@@ -1,5 +1,5 @@
 const userDb = require('../modules/userSchema')
-const characters = require('../modules/characters')
+const characterDb = require('../modules/characterSchema')
 const resSend = (res, error, message, data) => {
     res.send({error, message, data})
 }
@@ -12,6 +12,7 @@ const {
 
 module.exports = {
     getCharacters: async (req, res) => {
+        const characters = await characterDb.find()
         resSend(res, false, null, characters)
     },
     register: async (req, res) => {
@@ -38,6 +39,7 @@ module.exports = {
         for (let i = 0; i < 12 ; i++) {
             inventory.push('')
         }
+        await characterDb.findOneAndUpdate({image: character}, {$set: {isTaken: true}})
         const user = new userDb({
             username,
             password: hash,
@@ -46,12 +48,6 @@ module.exports = {
             money: 100,
             character: character
         })
-        for (let i = 0; i < characters.length; i++) {
-            if (characters[i].image === character){
-                characters[i].isTaken = true
-                break
-            }
-        }
         user.save()
             .then(() => {
             resSend(res, false, 'saved user to db', null)

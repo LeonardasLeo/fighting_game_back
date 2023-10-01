@@ -19,6 +19,46 @@ const random = (num, numToAdd) => {
     return Math.floor(Math.random() * num) + numToAdd
 }
 
+let attackInterval = null
+let timerInterval = null
+let currentAttacker
+let time = 20
+
+
+function startInterval (roomName, first, second, attacker, io) {
+    clearInterval(attackInterval)
+    clearInterval(timerInterval)
+    attackInterval = setInterval(() => {
+        if (first === currentAttacker){
+            currentAttacker = second
+            return io.to(roomName).emit('setAttacker', currentAttacker)
+        }
+        if (second === currentAttacker){
+            currentAttacker = first
+            return io.to(roomName).emit('setAttacker', currentAttacker)
+        }
+        if (attacker === ''){
+            currentAttacker = first
+            return io.to(roomName).emit('setAttacker', currentAttacker)
+        }
+    }, 20000)
+    timerInterval = setInterval(() => {
+        if (time > 1){
+            time -= 1
+            return io.to(roomName).emit('timer', time)
+        }else{
+            time = 20
+            return io.to(roomName).emit('timer', time)
+        }
+    }, 1000)
+}
+
+const clearIntervals = () => {
+    time = 20
+    clearInterval(attackInterval)
+    clearInterval(timerInterval)
+}
+
 module.exports = (server) => {
     const io = new Server((server),{
         cors: {
@@ -66,9 +106,20 @@ module.exports = (server) => {
                 io.to(roomName).emit('getBattleUsers', users)
             }
         })
+        socket.on('setWhoIsAttacking', ({roomName, first, second, attacker}) => {
+            //if attacker is undefined (initialState), then set it to first, else start interval again
+            if (attacker === ''){
+                currentAttacker = first
+                io.to(roomName).emit('setAttacker', currentAttacker)
+            }
+            time = 20
+            startInterval(roomName, first, second, attacker, io)
+        })
         socket.on('requestAttack', async ({roomName, firstUser, secondUser}) => {
             let firstUserMessage = ''
             let secondUserMessage = ''
+            const userOne = onlineUsers.find(x => x.username === firstUser.username)
+            const userTwo = onlineUsers.find(x => x.username === secondUser.username)
             const calculateDamage = () => {
                 const maxDamage = firstUser.selectedItems[0].damage.max
                 const minDamage = firstUser.selectedItems[0].damage.min
@@ -117,35 +168,58 @@ module.exports = (server) => {
             firstUser.message = firstUserMessage
             secondUser.message = secondUserMessage
             // on attack if the opponents health less than 0, we set it to 0, emit battleWon and give attacker the gold to DB
-            if (secondUser.health <= 0){
+            if (secondUser.health <= 0) {
                 secondUser.health = 0
                 await userDb.findOneAndUpdate({username: firstUser.username}, {$inc: {money: firstUser.gold}})
-                const userOne = onlineUsers.find(x => x.username === firstUser.username)
-                const userTwo = onlineUsers.find(x => x.username === secondUser.username)
                 userOne.status = 'idle'
                 userTwo.status = 'idle'
-                io.to(roomName).emit('battleWon', {first: firstUser, second: secondUser, message: `${firstUser.username} has won`})
+                clearIntervals()
+                io.to(roomName).emit('battleWon', {
+                    first: firstUser,
+                    second: secondUser,
+                    message: `${firstUser.username} has won`
+                })
                 io.socketsLeave(roomName)
             }
+            //check who was just attacking and set it to opposite, reset timer and emit timer and attacker
+            const setNextAttacker = () => {
+                try{
+                    if (currentAttacker === userOne.socketId){
+                        return userTwo.socketId
+                    }
+                    if (currentAttacker === userTwo.socketId){
+                        return userOne.socketId
+                    }
+                } catch (e){
+                    console.log('no users')
+                }
+            }
+            currentAttacker = setNextAttacker()
+            time = 20
             // emit updated values
+            io.to(roomName).emit('setAttacker', currentAttacker)
+            io.to(roomName).emit('timer', time)
             io.to(roomName).emit('attack', {first: firstUser, second: secondUser, roomName, damage: damageTaken})
 
         })
-        socket.on('pageReloaded', ({roomName, firstUser, secondUser}) => {
+        socket.on('pageLeft', ({roomName, firstUser, secondUser}) => {
             try {
                 const userOne = onlineUsers.find(x => x.username === firstUser.username)
                 const userTwo = onlineUsers.find(x => x.username === secondUser.username)
                 userOne.status = 'idle'
                 userTwo.status = 'idle'
-                io.to(roomName).emit('pageWasReloaded', `${firstUser.username} has left`)
+                clearIntervals()
+                io.to(roomName).emit('userLeftPage', `${firstUser.username} has left`)
                 io.socketsLeave(roomName)
             }catch (err){
                 console.log('no users to find')
             }
         })
-        socket.on('requestPotionDrink', async ({user, hpToAdd, roomName}) => {
+        socket.on('requestPotionDrink', async ({user, item, roomName}) => {
+            const hpToAdd = item.hp
             if (user.health !== 100 && user.health > 0){
                 const userInDb = await userDb.findOneAndUpdate({_id: user._id, 'selectedItems.type': 'potion'}, {$set: {'selectedItems.$': {type: 'potion'}}}, {new: true})
+                await userDb.findOneAndUpdate({_id: user._id, 'inventory.id': item.id}, {$set: {'inventory.$': ''}})
                 if (user.health + hpToAdd > 100){
                     user.health = 100
                 }else{

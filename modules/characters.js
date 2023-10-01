@@ -12,4 +12,10 @@ const characters = [
     {image: 'https://images.saymedia-content.com/.image/t_share/MTc0NDU2ODE4MTA4NDc1MDE0/hottest-male-video-game-characters.png', isTaken: false},
     {image: 'https://shop.bandai.co.uk/wp-content/uploads/2022/03/bandai-jujutsu-kaisen-yuji-itadori-001-1000x1000.png', isTaken: false}
 ]
+
+const characterDb = require('../modules/characterSchema')
+async function insert () {
+    await characterDb.insertMany(characters)
+}
+
 module.exports = characters
