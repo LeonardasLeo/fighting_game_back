@@ -7,7 +7,12 @@ const {
 } = require('../middleware/socketMiddleware')
 const {ignore} = require("nodemon/lib/rules");
 
+const rooms = {}
 let onlineUsers = []
+
+const random = (num, numToAdd) => {
+    return Math.floor(Math.random() * num) + numToAdd
+}
 
 const filterUsers = (socket) => {
     let copy = [...onlineUsers]
@@ -15,49 +20,41 @@ const filterUsers = (socket) => {
     socket.emit('getOnlineUsers', copy);
 }
 
-const random = (num, numToAdd) => {
-    return Math.floor(Math.random() * num) + numToAdd
+const setNextAttacker = (roomName, first, second) => {
+    let currentAttacker = rooms[roomName].currentAttacker
+    if (first === currentAttacker){
+        return second
+    }
+    if (second === currentAttacker){
+        return first
+    }
 }
 
-let attackInterval = null
-let timerInterval = null
-let currentAttacker
-let time = 20
+const clearIntervals = (roomName) => {
+    rooms[roomName].time = 20
+    clearInterval(rooms[roomName].attackInterval)
+    clearInterval(rooms[roomName].timerInterval)
+}
 
-
-function startInterval (roomName, first, second, attacker, io) {
-    clearInterval(attackInterval)
-    clearInterval(timerInterval)
-    attackInterval = setInterval(() => {
-        if (first === currentAttacker){
-            currentAttacker = second
-            return io.to(roomName).emit('setAttacker', currentAttacker)
-        }
-        if (second === currentAttacker){
-            currentAttacker = first
-            return io.to(roomName).emit('setAttacker', currentAttacker)
-        }
-        if (attacker === ''){
-            currentAttacker = first
-            return io.to(roomName).emit('setAttacker', currentAttacker)
-        }
+function startInterval (roomName, first, second, io) {
+    clearIntervals(roomName)
+    let currentAttacker = rooms[roomName].currentAttacker
+    rooms[roomName].attackInterval = setInterval(() => {
+        currentAttacker = setNextAttacker(roomName, first, second)
+        return io.to(roomName).emit('setAttacker', currentAttacker)
     }, 20000)
-    timerInterval = setInterval(() => {
-        if (time > 1){
-            time -= 1
-            return io.to(roomName).emit('timer', time)
+    rooms[roomName].timerInterval = setInterval(() => {
+        if (rooms[roomName].time > 1){
+            rooms[roomName].time -= 1
         }else{
-            time = 20
-            return io.to(roomName).emit('timer', time)
+            rooms[roomName].time = 20
         }
+        return io.to(roomName).emit('timer', rooms[roomName].time)
+
     }, 1000)
 }
 
-const clearIntervals = () => {
-    time = 20
-    clearInterval(attackInterval)
-    clearInterval(timerInterval)
-}
+
 
 module.exports = (server) => {
     const io = new Server((server),{
@@ -97,27 +94,29 @@ module.exports = (server) => {
             const user = onlineUsers.find(x => x.socketId === id)
             user.status = 'battle'
             socket.join(roomName)
+            rooms[roomName] = {currentAttacker: '', time: 20, attackInterval: null, timerInterval: null}
         })
         socket.on('requestBattleUsers',  async ({roomName, userOne, userTwo}) => {
             const first = onlineUsers.find(x => x.socketId === userOne)
             const second = onlineUsers.find(x => x.socketId === userTwo)
             if (first && second){
                 const users = await findUsersInDb(first.username, second.username)
+                startInterval(roomName, userOne, userTwo, io)
                 io.to(roomName).emit('getBattleUsers', users)
             }
         })
-        socket.on('setWhoIsAttacking', ({roomName, first, second, attacker}) => {
-            //if attacker is undefined (initialState), then set it to first, else start interval again
-            if (attacker === ''){
-                currentAttacker = first
-                io.to(roomName).emit('setAttacker', currentAttacker)
+        socket.on('setWhoIsAttacking', ({roomName, first}) => {
+            try {
+                rooms[roomName].currentAttacker = first
+                io.to(roomName).emit('setAttacker', rooms[roomName].currentAttacker)
+            } catch (e) {
+                console.log(e)
             }
-            time = 20
-            startInterval(roomName, first, second, attacker, io)
         })
         socket.on('requestAttack', async ({roomName, firstUser, secondUser}) => {
             let firstUserMessage = ''
             let secondUserMessage = ''
+            let currentAttacker
             const userOne = onlineUsers.find(x => x.username === firstUser.username)
             const userTwo = onlineUsers.find(x => x.username === secondUser.username)
             const calculateDamage = () => {
@@ -173,32 +172,23 @@ module.exports = (server) => {
                 await userDb.findOneAndUpdate({username: firstUser.username}, {$inc: {money: firstUser.gold}})
                 userOne.status = 'idle'
                 userTwo.status = 'idle'
-                clearIntervals()
+                clearIntervals(roomName)
                 io.to(roomName).emit('battleWon', {
                     first: firstUser,
                     second: secondUser,
                     message: `${firstUser.username} has won`
                 })
-                io.socketsLeave(roomName)
+                return io.socketsLeave(roomName)
             }
-            //check who was just attacking and set it to opposite, reset timer and emit timer and attacker
-            const setNextAttacker = () => {
-                try{
-                    if (currentAttacker === userOne.socketId){
-                        return userTwo.socketId
-                    }
-                    if (currentAttacker === userTwo.socketId){
-                        return userOne.socketId
-                    }
-                } catch (e){
-                    console.log('no users')
-                }
-            }
-            currentAttacker = setNextAttacker()
-            time = 20
+            //set next attacker, reset timer and emit timer and attacker
+            currentAttacker = setNextAttacker(roomName, userOne.socketId, userTwo.socketId)
+            rooms[roomName].time = 20
+            rooms[roomName].currentAttacker = currentAttacker
+            startInterval(roomName, firstUser, secondUser, io)
+
             // emit updated values
             io.to(roomName).emit('setAttacker', currentAttacker)
-            io.to(roomName).emit('timer', time)
+            io.to(roomName).emit('timer', rooms[roomName].time)
             io.to(roomName).emit('attack', {first: firstUser, second: secondUser, roomName, damage: damageTaken})
 
         })
@@ -208,7 +198,7 @@ module.exports = (server) => {
                 const userTwo = onlineUsers.find(x => x.username === secondUser.username)
                 userOne.status = 'idle'
                 userTwo.status = 'idle'
-                clearIntervals()
+                clearIntervals(roomName)
                 io.to(roomName).emit('userLeftPage', `${firstUser.username} has left`)
                 io.socketsLeave(roomName)
             }catch (err){
